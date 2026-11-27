@@ -7,7 +7,14 @@ from pathlib import Path
 
 import requests
 
+from github_engineering_intelligence.ingestion.manifest import (
+    initialize_manifest,
+    mark_processing,
+    mark_result,
+)
+
 BASE_URL = "https://data.gharchive.org"
+# BASE_URL = "http://127.0.0.1:1"
 BRONZE_DIR = Path("data/bronze")
 
 MAX_ATTEMPTS = 4
@@ -89,7 +96,7 @@ def _download_once(
 
 
 # Responsible for retries and error handling.
-def download_archive(
+def _download_with_retries(
     year: int,
     month: int,
     day: int,
@@ -138,3 +145,51 @@ def download_archive(
         time.sleep(delay)
 
     raise RuntimeError("Retry loop exited unexpectedly")
+
+
+def download_archive(
+    year: int,
+    month: int,
+    day: int,
+    hour: int,
+) -> Path:
+    # Validate the requested hourly interval.
+    archive_datetime = datetime(year, month, day, hour)
+
+    archive_hour = archive_datetime.strftime(
+        "%Y-%m-%dT%H:00:00Z"
+    )
+
+    # Initialize and persist the ingestion state.
+    initialize_manifest()
+    mark_processing(archive_hour)
+
+    try:
+        path = _download_with_retries(
+            year, month, day, hour
+        )
+
+    except ArchiveUnavailableError as error:
+        mark_result(
+            archive_hour,
+            "missing",
+            error_message=str(error),
+        )
+        raise
+
+    except Exception as error:
+        mark_result(
+            archive_hour,
+            "failed",
+            error_message=str(error),
+        )
+        raise
+
+    else:
+        mark_result(
+            archive_hour,
+            "success",
+            file_path=path,
+        )
+
+        return path

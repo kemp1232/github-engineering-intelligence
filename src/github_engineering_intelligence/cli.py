@@ -1,7 +1,7 @@
 
 import argparse
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 
 import requests
 
@@ -9,6 +9,10 @@ from github_engineering_intelligence.ingestion.downloader import (
     ArchiveUnavailableError,
     CorruptedArchiveError,
     download_archive,
+)
+
+from github_engineering_intelligence.ingestion.backfill import (
+    backfill_archives,
 )
 
 
@@ -22,6 +26,7 @@ def main() -> int:
         required=True,
     )
 
+    # Single archive ingestion
     ingest_parser = subparsers.add_parser(
         "ingest",
         help="Download a single hourly GitHub archive",
@@ -43,6 +48,26 @@ def main() -> int:
         help="Archive hour in UTC",
     )
 
+    # Historical backfill
+    backfill_parser = subparsers.add_parser(
+        "backfill",
+        help="Download historical GitHub archives",
+    )
+
+    backfill_parser.add_argument(
+        "--start",
+        type=datetime.fromisoformat,
+        required=True,
+        help="Start timestamp in UTC (inclusive)",
+    )
+
+    backfill_parser.add_argument(
+        "--end",
+        type=datetime.fromisoformat,
+        required=True,
+        help="End timestamp in UTC (exclusive)",
+    )
+
     args = parser.parse_args()
 
     try:
@@ -54,7 +79,29 @@ def main() -> int:
                 args.hour,
             )
 
+        elif args.command == "backfill":
+            start = args.start
+            end = args.end
+
+            if start.tzinfo is not None:
+                start = start.astimezone(
+                    timezone.utc
+                ).replace(tzinfo=None)
+
+            if end.tzinfo is not None:
+                end = end.astimezone(
+                    timezone.utc
+                ).replace(tzinfo=None)
+
+            success = backfill_archives(start, end)
+
+            return 0 if success else 1
+
         return 0
+
+    except ValueError as error:
+        print(f"Invalid input: {error}", file=sys.stderr)
+        return 1
 
     except ArchiveUnavailableError as error:
         print(f"Archive unavailable: {error}", file=sys.stderr)
